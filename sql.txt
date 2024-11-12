@@ -10,8 +10,10 @@ CREATE TABLE product (
     price DECIMAL(10, 2) NOT NULL,
     count_on_storage INT NOT NULL,
     ID_categoty INT,
+    ID_provider INT,
     description VARCHAR(255),
-    FOREIGN KEY (ID_categoty) REFERENCES categoty(ID_categoty)
+    FOREIGN KEY (ID_categoty) REFERENCES categoty(ID_categoty),
+    FOREIGN KEY (ID_provider) REFERENCES provider(ID_provider)
 );
 
 -- Таблица "Клиенты"
