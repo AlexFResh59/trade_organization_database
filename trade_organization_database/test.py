@@ -163,12 +163,116 @@ class DatabaseInterface:
             conn.close()
 
     def update_record(self):
-        # Аналогично добавлению записи, но с предварительным заполнением полей текущими значениями
-        pass
+        selected_item = self.tree.selection()
+        if not selected_item:
+            messagebox.showerror("Error", "No record selected")
+            return
+
+        record = self.tree.item(selected_item)["values"]
+        if not record:
+            messagebox.showerror("Error", "Invalid selection")
+            return
+
+        fields = self.get_column_names()
+        if not fields:
+            return
+
+        # Окно для обновления записи
+        update_window = tk.Toplevel(self.root)
+        update_window.title(f"Update Record in {self.current_table}")
+
+        entries = {}
+        for i, field in enumerate(fields):
+            label = tk.Label(update_window, text=field)
+            label.grid(row=i, column=0, padx=5, pady=5)
+            entry = tk.Entry(update_window)
+            entry.insert(0, str(record[i]))
+            entry.grid(row=i, column=1, padx=5, pady=5)
+            entries[field] = entry
+
+        def save_update():
+            updated_data = {field: entry.get() for field, entry in entries.items()}
+            conn = connect_db()
+            cur = conn.cursor()
+            placeholders = ", ".join([f"{field} = %s" for field in fields])
+            query = f"UPDATE trade_organization.{self.current_table} SET {placeholders} WHERE {fields[0]} = %s"
+            try:
+                cur.execute(query, list(updated_data.values()) + [record[0]])
+                conn.commit()
+                messagebox.showinfo("Success", "Record updated successfully!")
+                update_window.destroy()
+                self.display_table(self.current_table)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to update record: {e}")
+            finally:
+                conn.close()
+
+        save_button = tk.Button(update_window, text="Save", command=save_update)
+        save_button.grid(row=len(fields), column=0, columnspan=2, pady=10)
 
     def search_record(self):
-        # Функция для поиска записи
-        pass
+        if not self.current_table:
+            messagebox.showerror("Error", "No table selected")
+            return
+
+        search_window = tk.Toplevel(self.root)
+        search_window.title(f"Search in {self.current_table}")
+
+        fields = self.get_column_names()
+        if not fields:
+            return
+
+        entries = {}
+        for i, field in enumerate(fields):
+            label = tk.Label(search_window, text=f"Search by {field}:")
+            label.grid(row=i, column=0, padx=5, pady=5)
+            entry = tk.Entry(search_window)
+            entry.grid(row=i, column=1, padx=5, pady=5)
+            entries[field] = entry
+
+        def execute_search():
+            search_criteria = {field: entry.get() for field, entry in entries.items() if entry.get()}
+            if not search_criteria:
+                messagebox.showerror("Error", "No search criteria provided")
+                return
+
+            conditions = " AND ".join([f"{field}::text ILIKE %s" for field in search_criteria.keys()])
+            values = [f"%{v}%" for v in search_criteria.values()]
+            query = f"SELECT * FROM trade_organization.{self.current_table} WHERE {conditions}"
+
+            conn = connect_db()
+            cur = conn.cursor()
+            try:
+                cur.execute(query, values)
+                rows = cur.fetchall()
+                self.display_search_results(rows)
+                search_window.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to search: {e}")
+            finally:
+                conn.close()
+
+        search_button = tk.Button(search_window, text="Search", command=execute_search)
+        search_button.grid(row=len(fields), column=0, columnspan=2, pady=10)
+
+    def display_search_results(self, rows):
+        for widget in self.content_frame.winfo_children():
+            widget.destroy()
+
+        if not rows:
+            messagebox.showinfo("Search Results", "No records found matching the criteria")
+            return
+
+        column_names = self.get_column_names()
+
+        self.tree = ttk.Treeview(self.content_frame, columns=column_names, show="headings")
+        for col in column_names:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=100)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+
+        for row in rows:
+            self.tree.insert("", tk.END, values=row)
 
     def export_to_csv(self):
         if not self.current_table:
