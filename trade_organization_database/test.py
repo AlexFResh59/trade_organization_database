@@ -17,7 +17,7 @@ class DatabaseInterface:
         self.root = root
         self.root.title("Database Manager")
         self.root.geometry("900x600")
-        
+
         # Навигационная панель
         self.nav_frame = tk.Frame(self.root)
         self.nav_frame.pack(side=tk.TOP, fill=tk.X)
@@ -26,12 +26,13 @@ class DatabaseInterface:
             "Products": lambda: self.display_table("products"),
             "Customers": lambda: self.display_table("customers"),
             "Sales": lambda: self.display_table("sales"),
-            "Suppliers": lambda: self.display_table("suppliers")
+            "Suppliers": lambda: self.display_table("suppliers"),
+            "Categories": lambda: self.display_table("categories")
         }
         for name, command in self.table_buttons.items():
             button = tk.Button(self.nav_frame, text=name, command=command, width=15)
             button.pack(side=tk.LEFT, padx=5, pady=5)
-        
+
         # Фрейм для содержимого таблицы
         self.content_frame = tk.Frame(self.root)
         self.content_frame.pack(fill=tk.BOTH, expand=True)
@@ -39,7 +40,7 @@ class DatabaseInterface:
         # Панель управления
         self.control_frame = tk.Frame(self.root)
         self.control_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        
+
         # Таблица отображения данных
         self.tree = None
         self.current_table = None
@@ -177,27 +178,27 @@ class DatabaseInterface:
         if not fields:
             return
 
-        # Окно для обновления записи
         update_window = tk.Toplevel(self.root)
         update_window.title(f"Update Record in {self.current_table}")
 
         entries = {}
-        for i, field in enumerate(fields):
+        for i, (field, value) in enumerate(zip(fields, record)):
             label = tk.Label(update_window, text=field)
             label.grid(row=i, column=0, padx=5, pady=5)
             entry = tk.Entry(update_window)
-            entry.insert(0, str(record[i]))
+            entry.insert(0, value)
             entry.grid(row=i, column=1, padx=5, pady=5)
             entries[field] = entry
 
-        def save_update():
-            updated_data = {field: entry.get() for field, entry in entries.items()}
+        def save_changes():
+            new_data = {field: entry.get() for field, entry in entries.items()}
+            primary_key = record[0]
             conn = connect_db()
             cur = conn.cursor()
-            placeholders = ", ".join([f"{field} = %s" for field in fields])
-            query = f"UPDATE trade_organization.{self.current_table} SET {placeholders} WHERE {fields[0]} = %s"
+            set_clause = ", ".join([f"{field} = %s" for field in new_data.keys()])
+            query = f"UPDATE trade_organization.{self.current_table} SET {set_clause} WHERE id = %s"
             try:
-                cur.execute(query, list(updated_data.values()) + [record[0]])
+                cur.execute(query, list(new_data.values()) + [primary_key])
                 conn.commit()
                 messagebox.showinfo("Success", "Record updated successfully!")
                 update_window.destroy()
@@ -207,72 +208,63 @@ class DatabaseInterface:
             finally:
                 conn.close()
 
-        save_button = tk.Button(update_window, text="Save", command=save_update)
+        save_button = tk.Button(update_window, text="Save", command=save_changes)
         save_button.grid(row=len(fields), column=0, columnspan=2, pady=10)
 
     def search_record(self):
-        if not self.current_table:
-            messagebox.showerror("Error", "No table selected")
-            return
-
         search_window = tk.Toplevel(self.root)
-        search_window.title(f"Search in {self.current_table}")
+        search_window.title("Search Across Tables")
 
-        fields = self.get_column_names()
-        if not fields:
-            return
-
-        entries = {}
-        for i, field in enumerate(fields):
-            label = tk.Label(search_window, text=f"Search by {field}:")
-            label.grid(row=i, column=0, padx=5, pady=5)
-            entry = tk.Entry(search_window)
-            entry.grid(row=i, column=1, padx=5, pady=5)
-            entries[field] = entry
+        tk.Label(search_window, text="Search Value:").grid(row=0, column=0, padx=5, pady=5)
+        search_entry = tk.Entry(search_window)
+        search_entry.grid(row=0, column=1, padx=5, pady=5)
 
         def execute_search():
-            search_criteria = {field: entry.get() for field, entry in entries.items() if entry.get()}
-            if not search_criteria:
-                messagebox.showerror("Error", "No search criteria provided")
+            search_value = search_entry.get()
+            if not search_value:
+                messagebox.showerror("Error", "Please enter a search value!")
                 return
 
-            conditions = " AND ".join([f"{field}::text ILIKE %s" for field in search_criteria.keys()])
-            values = [f"%{v}%" for v in search_criteria.values()]
-            query = f"SELECT * FROM trade_organization.{self.current_table} WHERE {conditions}"
-
+            query = """
+            SELECT 
+                p.name AS product_name,
+                c.name AS category_name,
+                s.name AS supplier_name,
+                cu.name AS customer_name
+            FROM trade_organization.products p
+            LEFT JOIN trade_organization.categories c ON p.category_id = c.id
+            LEFT JOIN trade_organization.suppliers s ON p.supplier_id = s.id
+            LEFT JOIN trade_organization.sales sa ON p.id = sa.product_id
+            LEFT JOIN trade_organization.customers cu ON sa.customer_id = cu.id
+            WHERE 
+                p.name ILIKE %s OR 
+                c.name ILIKE %s OR 
+                s.name ILIKE %s OR
+                cu.name ILIKE %s
+            """
             conn = connect_db()
             cur = conn.cursor()
             try:
-                cur.execute(query, values)
+                cur.execute(query, [f"%{search_value}%"] * 4)
                 rows = cur.fetchall()
-                self.display_search_results(rows)
+                column_names = [desc[0] for desc in cur.description]
+
+                self.tree.delete(*self.tree.get_children())
+                self.tree["columns"] = column_names
+                for col in column_names:
+                    self.tree.heading(col, text=col)
+                    self.tree.column(col, width=150)
+
+                for row in rows:
+                    self.tree.insert("", tk.END, values=row)
                 search_window.destroy()
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to search: {e}")
+                messagebox.showerror("Error", f"Search failed: {e}")
             finally:
                 conn.close()
 
         search_button = tk.Button(search_window, text="Search", command=execute_search)
-        search_button.grid(row=len(fields), column=0, columnspan=2, pady=10)
-
-    def display_search_results(self, rows):
-        for widget in self.content_frame.winfo_children():
-            widget.destroy()
-
-        if not rows:
-            messagebox.showinfo("Search Results", "No records found matching the criteria")
-            return
-
-        column_names = self.get_column_names()
-
-        self.tree = ttk.Treeview(self.content_frame, columns=column_names, show="headings")
-        for col in column_names:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=100)
-        self.tree.pack(fill=tk.BOTH, expand=True)
-
-        for row in rows:
-            self.tree.insert("", tk.END, values=row)
+        search_button.grid(row=1, column=0, columnspan=2, pady=10)
 
     def export_to_csv(self):
         if not self.current_table:
@@ -302,7 +294,6 @@ class DatabaseInterface:
             conn.close()
 
     def get_column_names(self):
-        # Получить названия столбцов текущей таблицы
         conn = connect_db()
         cur = conn.cursor()
         try:
